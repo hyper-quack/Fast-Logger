@@ -1,0 +1,27 @@
+{
+  "name": "rotlog",
+  "version": "0.1.0",
+  "description": "Fast rotating logger for Bun (Rust core via bun:ffi): rotation, gzip, Google Cloud Storage upload, request logging",
+  "license": "MIT",
+  "type": "module",
+  "module": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "native"
+  ],
+  "scripts": {
+    "build:native": "cargo build --release --lib --manifest-path ../../Cargo.toml && bun -e \"const { suffix } = require('bun:ffi'); const fs = require('fs'); const n = process.platform === 'win32' ? 'rotlog.dll' : 'librotlog.' + suffix; fs.mkdirSync('native', { recursive: true }); fs.copyFileSync('../../target/release/' + n, 'native/' + n); console.log('native/' + n);\"",
+    "test": "bun test",
+    "bench": "bun run bench/bench.ts"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
