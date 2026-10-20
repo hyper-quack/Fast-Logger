@@ -104,6 +104,29 @@ jobs:
       - name: Assemble npm packages
         run: bun bindings/bun/scripts/pack-npm.ts --artifacts artifacts --out dist/npm
 
+      # Errors are also emitted as ::error annotations: those are readable on the
+      # run page and through the public API, unlike raw logs.
+      - name: Check registry credentials
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          ok=1
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error title=NPM_TOKEN is not set::Add it under Settings > Secrets and variables > Actions > Repository secrets (exact name NPM_TOKEN)."
+            ok=0
+          elif ! who=$(npm whoami 2>&1); then
+            echo "::error title=npm rejected NPM_TOKEN::$(echo "$who" | grep -E 'npm (error|ERR)' | head -4 | tr '\n' ' ')"
+            ok=0
+          else
+            echo "npm: authenticated as $who"
+          fi
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "::error title=CARGO_REGISTRY_TOKEN is not set::Add it under Settings > Secrets and variables > Actions > Repository secrets (exact name CARGO_REGISTRY_TOKEN)."
+            ok=0
+          fi
+          [ "$ok" = 1 ]
+
       - name: Publish to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -114,9 +137,14 @@ jobs:
             version=$(jq -r .version "$dir/package.json")
             if npm view "$name@$version" version >/dev/null 2>&1; then
               echo "$name@$version is already published"
-            else
-              npm publish "$dir" --access public
+              continue
             fi
+            if ! out=$(npm publish "$dir" --access public 2>&1); then
+              echo "$out"
+              echo "::error title=npm publish $name failed::$(echo "$out" | grep -E 'npm (error|ERR)' | head -6 | tr '\n' ' ')"
+              exit 1
+            fi
+            echo "$out"
           done
 
       - name: Publish to crates.io
@@ -126,9 +154,14 @@ jobs:
           version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
           if curl -fsS -A "rotlog-release (github actions)" "https://crates.io/api/v1/crates/rotlog/$version" >/dev/null 2>&1; then
             echo "rotlog $version is already on crates.io"
-          else
-            cargo publish --locked
+            exit 0
           fi
+          if ! out=$(cargo publish --locked 2>&1); then
+            echo "$out"
+            echo "::error title=cargo publish failed::$(echo "$out" | grep -E '^(error|Caused by)' -A2 | head -6 | tr '\n' ' ')"
+            exit 1
+          fi
+          echo "$out"
 
       - name: Package binaries
         run: |
