@@ -19,7 +19,8 @@ A small, fast rotating logger written in Rust, with a command line tool and a Ty
 
 ## Contents
 
-- [Build](#build)
+- [Install](#install)
+- [Build from source](#build-from-source)
 - [CLI quick start](#cli-quick-start)
 - [Bun / TypeScript](#bun--typescript)
 - [Rust library](#rust-library)
@@ -32,10 +33,22 @@ A small, fast rotating logger written in Rust, with a command line tool and a Ty
 - [How it works](#how-it-works)
 - [Performance](#performance)
 - [Development](#development)
+- [Releasing](#releasing)
 
-## Build
+## Install
 
-You need Rust 1.85 or newer.
+```sh
+bun add rotlog          # Bun library + `rotlog` CLI (bunx rotlog …), prebuilt for macOS and Linux
+cargo install rotlog    # CLI only, built from source (Rust 1.88+)
+```
+
+Prebuilt CLI binaries for macOS (arm64, x64) and Linux (x64, arm64; glibc 2.17+) are also attached to each [GitHub release](https://github.com/hyper-quack/fast-logger/releases). Each archive contains `rotlog` and `librotlog`.
+
+The npm package is for Bun: it uses `bun:ffi` and ships TypeScript sources. Its native part comes from an optional dependency matching your platform (`rotlog-darwin-arm64`, `rotlog-linux-x64-gnu`, …). Windows and musl (Alpine) are not supported yet.
+
+## Build from source
+
+You need Rust 1.88 or newer.
 
 ```sh
 cargo build --release
@@ -77,13 +90,13 @@ rotlog -N api maintain                        # compress + upload + prune now
 
 ## Bun / TypeScript
 
-The package in [`bindings/bun`](bindings/bun) loads the Rust core through `bun:ffi`.
+Install with `bun add rotlog`. The package loads the Rust core through `bun:ffi`. Working from this repository instead:
 
 ```sh
 cd bindings/bun && bun run build:native     # builds librotlog and copies it into ./native
 ```
 
-The library is looked up in this order: the `libPath` option, `ROTLOG_LIB`, `bindings/bun/native/`, then `target/release` and `target/debug`.
+The library is looked up in this order: the `libPath` option, `ROTLOG_LIB`, the installed platform package, `bindings/bun/native/`, then `target/release` and `target/debug`. The CLI (`bunx rotlog`) uses `ROTLOG_BIN`, then the same places.
 
 ```ts
 import { createLogger, withRequestLogging, setUser } from "rotlog";
@@ -336,8 +349,29 @@ cd bindings/bun && bun install && bun test   # FFI binding, Bun.serve middleware
 bunx tsc --noEmit -p bindings/bun
 ```
 
+CI (`.github/workflows/ci.yml`) runs `cargo fmt --check`, clippy with `-D warnings`, the Rust tests and the Bun tests on Linux and macOS for every push and pull request.
+
 Layout: `src/logger.rs` (writer engine), `src/format.rs` (encoding), `src/rotation.rs` (schedule and naming), `src/maintain.rs` / `src/compress.rs` / `src/gcs.rs` (archive lifecycle), `src/read.rs` (parsing and filters), `src/control.rs` (CLI ↔ writer), `src/ffi.rs` (C ABI), `src/main.rs` + `src/cli/` (CLI), `bindings/bun/` (TypeScript API).
 
+
+## Releasing
+
+Releases are published by `.github/workflows/release.yml` when a `v*` tag is pushed. It runs the tests, builds four platforms, publishes `rotlog-<platform>` and `rotlog` to npm and the crate to crates.io, and creates a GitHub release with the binaries. Versions that are already published are skipped, so a failed run can simply be re-run.
+
+One-time setup, as GitHub repository secrets (Settings → Secrets and variables → Actions):
+
+- `NPM_TOKEN`: an npm granular access token with read and write access to packages. For the very first publish, the token must be allowed to create new packages.
+- `CARGO_REGISTRY_TOKEN`: a crates.io API token with the `publish-new` and `publish-update` scopes.
+
+For each release:
+
+1. Bump `version` in `Cargo.toml` and `bindings/bun/package.json` (they must match), then run `cargo build` to update `Cargo.lock`.
+2. Commit, then tag and push:
+   ```sh
+   git tag v0.1.1 && git push origin main v0.1.1
+   ```
+
+To check the build matrix without publishing anything, run the workflow manually from the Actions tab. `bun scripts/pack-npm.ts --artifacts <dir> --allow-missing` in `bindings/bun` assembles the npm packages locally from your own builds.
 
 ## License
 

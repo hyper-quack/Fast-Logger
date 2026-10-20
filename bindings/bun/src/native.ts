@@ -1,8 +1,8 @@
 // Loads the Rust core (librotlog) through bun:ffi.
 
 import { dlopen, FFIType, suffix } from "bun:ffi";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { accessSync, chmodSync, constants, existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 const symbols = {
   rl_open: { args: [FFIType.ptr, FFIType.u32], returns: FFIType.ptr },
@@ -25,16 +25,52 @@ export type Native = ReturnType<typeof dlopen<typeof symbols>>["symbols"];
 
 const fileName = process.platform === "win32" ? "rotlog.dll" : `librotlog.${suffix}`;
 
+/** npm package holding the prebuilt library and CLI for this machine, e.g. `rotlog-darwin-arm64`. */
+export const platformPackage = `rotlog-${process.platform}-${process.arch}${process.platform === "linux" ? "-gnu" : ""}`;
+
+/** Directory of the installed platform package, if any. */
+function platformDir(): string | undefined {
+  try {
+    return dirname(Bun.resolveSync(`${platformPackage}/package.json`, import.meta.dir));
+  } catch {
+    return undefined;
+  }
+}
+
+/** Where a native file is looked up, in order: platform package, then a local build. */
+function nativeCandidates(file: string): string[] {
+  const here = import.meta.dir;
+  const pkg = platformDir();
+  return [
+    pkg && join(pkg, file),
+    join(here, "..", "native", file),
+    join(here, "..", "..", "..", "target", "release", file),
+    join(here, "..", "..", "..", "target", "debug", file),
+  ].filter((p): p is string => !!p);
+}
+
 /** Where the shared library is looked up, in order. */
 export function libraryCandidates(explicit?: string): string[] {
-  const here = import.meta.dir;
-  return [
-    explicit,
-    process.env.ROTLOG_LIB,
-    join(here, "..", "native", fileName),
-    join(here, "..", "..", "..", "target", "release", fileName),
-    join(here, "..", "..", "..", "target", "debug", fileName),
-  ].filter((p): p is string => !!p);
+  return [explicit, process.env.ROTLOG_LIB, ...nativeCandidates(fileName)].filter((p): p is string => !!p);
+}
+
+/** Path of the `rotlog` CLI binary (`ROTLOG_BIN`, the platform package, or a local build). */
+export function cliPath(): string {
+  const exe = process.platform === "win32" ? "rotlog.exe" : "rotlog";
+  const candidates = [process.env.ROTLOG_BIN, ...nativeCandidates(exe)].filter((p): p is string => !!p);
+  const path = candidates.find((p) => existsSync(p));
+  if (!path) {
+    throw new Error(
+      `rotlog: no prebuilt CLI for ${process.platform}-${process.arch} (package ${platformPackage}). ` +
+        `Install it with \`cargo install rotlog\` or set ROTLOG_BIN. Looked in:\n  ${candidates.join("\n  ")}`,
+    );
+  }
+  try {
+    accessSync(path, constants.X_OK);
+  } catch {
+    chmodSync(path, 0o755); // registries and CI artifacts may drop the executable bit
+  }
+  return path;
 }
 
 let loaded: { lib: Native; path: string } | undefined;
@@ -45,8 +81,9 @@ export function native(explicit?: string): Native {
   const path = candidates.find((p) => existsSync(p));
   if (!path) {
     throw new Error(
-      `rotlog: native library ${fileName} not found. Build it with \`bun run build:native\` ` +
-        `(or \`cargo build --release\`) or set ROTLOG_LIB. Looked in:\n  ${candidates.join("\n  ")}`,
+      `rotlog: native library ${fileName} not found for ${process.platform}-${process.arch}. ` +
+        `Install the matching optional package (${platformPackage}), build it with \`bun run build:native\`, ` +
+        `or set ROTLOG_LIB. Looked in:\n  ${candidates.join("\n  ")}`,
     );
   }
   loaded = { lib: dlopen(path, symbols).symbols, path };

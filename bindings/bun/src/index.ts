@@ -111,6 +111,8 @@ export interface Stats {
   deleted: number;
   maintenance_completed: number;
   last_error: string | null;
+  /** The writer's rotation / compression / upload settings, summarized. */
+  policy: string;
 }
 
 // ---- request context ---------------------------------------------------

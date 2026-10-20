@@ -1,22 +1,52 @@
 {
   "name": "rotlog",
   "version": "0.1.0",
-  "description": "Fast rotating logger for Bun (Rust core via bun:ffi): rotation, gzip, Google Cloud Storage upload, request logging",
+  "description": "Fast rotating logger for Bun (Rust core via bun:ffi): time/size rotation, gzip, Google Cloud Storage upload, request logging, rotlog CLI",
   "license": "MIT",
+  "author": "Abdelalim Chicha",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hyper-quack/fast-logger.git",
+    "directory": "bindings/bun"
+  },
+  "homepage": "https://github.com/hyper-quack/fast-logger#readme",
+  "bugs": "https://github.com/hyper-quack/fast-logger/issues",
+  "keywords": [
+    "bun",
+    "logger",
+    "logging",
+    "log-rotation",
+    "logrotate",
+    "gzip",
+    "gcs",
+    "ffi",
+    "rust",
+    "request-logging"
+  ],
   "type": "module",
   "module": "src/index.ts",
   "types": "src/index.ts",
   "exports": {
     ".": "./src/index.ts"
   },
+  "bin": {
+    "rotlog": "bin/rotlog.ts"
+  },
   "files": [
     "src",
-    "native"
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "os": [
+    "darwin",
+    "linux"
   ],
   "scripts": {
-    "build:native": "cargo build --release --lib --manifest-path ../../Cargo.toml && bun -e \"const { suffix } = require('bun:ffi'); const fs = require('fs'); const n = process.platform === 'win32' ? 'rotlog.dll' : 'librotlog.' + suffix; fs.mkdirSync('native', { recursive: true }); fs.copyFileSync('../../target/release/' + n, 'native/' + n); console.log('native/' + n);\"",
+    "build:native": "cargo build --release --manifest-path ../../Cargo.toml && bun -e \"const { suffix } = require('bun:ffi'); const fs = require('fs'); const n = process.platform === 'win32' ? 'rotlog.dll' : 'librotlog.' + suffix; fs.mkdirSync('native', { recursive: true }); fs.copyFileSync('../../target/release/' + n, 'native/' + n); console.log('native/' + n);\"",
     "test": "bun test",
-    "bench": "bun run bench/bench.ts"
+    "bench": "bun run bench/bench.ts",
+    "pack:npm": "bun scripts/pack-npm.ts"
   },
   "engines": {
     "bun": ">=1.1.0"

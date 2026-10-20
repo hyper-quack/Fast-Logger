@@ -1,0 +1,53 @@
+[package]
+name = "rotlog"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+authors = ["Abdelalim Chicha"]
+description = "Fast rotating logger and CLI: time/size rotation, gzip archiving, Google Cloud Storage upload, tail/query/stats, Bun FFI bindings"
+readme = "README.md"
+repository = "https://github.com/hyper-quack/fast-logger"
+homepage = "https://github.com/hyper-quack/fast-logger"
+documentation = "https://docs.rs/rotlog"
+keywords = ["logging", "rotation", "logrotate", "gcs", "cli"]
+categories = ["development-tools::debugging", "command-line-utilities"]
+# Only what the crate needs; the Bun package, CI and examples stay out of the .crate.
+include = ["/src/**/*.rs", "/tests/**/*.rs", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[[bin]]
+name = "rotlog"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli", "gcs"]
+# The `rotlog` command line tool.
+cli = ["dep:clap"]
+# Upload of archives to Google Cloud Storage.
+gcs = ["dep:ureq", "dep:ring"]
+
+[dependencies]
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+toml = "1"
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+clap = { version = "4", optional = true, default-features = false, features = ["std", "derive", "help", "usage", "error-context", "env", "suggestions", "color"] }
+ureq = { version = "3", optional = true, default-features = false, features = ["rustls"] }
+ring = { version = "0.17", optional = true }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+# Not `strip = true`: on macOS that runs Apple's `strip`, which on macOS 27 corrupts
+# dylibs (dlopen: "mis-aligned LINKEDIT string pool"). Release builds strip at link
+# time instead (see .github/workflows/release.yml).
+strip = false
