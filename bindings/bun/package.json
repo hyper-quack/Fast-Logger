@@ -1,6 +1,6 @@
 {
   "name": "rotlog",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Fast rotating logger for Bun (Rust core via bun:ffi): time/size rotation, gzip, Google Cloud Storage upload, request logging, rotlog CLI",
   "license": "MIT",
   "author": "Abdelalim Chicha",

@@ -3,7 +3,8 @@
 #   - publish rotlog-<platform> packages and rotlog to npm   (secret NPM_TOKEN)
 #   - publish the crate to crates.io                          (secret CARGO_REGISTRY_TOKEN)
 #   - attach the binaries to a GitHub Release
-# Re-running is safe: versions already published are skipped.
+# npm, crates.io and the GitHub release are separate jobs; re-running any of them
+# is safe because versions that are already published are skipped.
 # "Run workflow" (workflow_dispatch) only builds, to check the matrix without publishing.
 name: release
 
@@ -75,7 +76,9 @@ jobs:
           path: artifacts
           if-no-files-found: error
 
-  publish:
+  # The three publishing jobs are independent: a problem with one registry
+  # doesn't block the others, and each can be re-run on its own.
+  npm:
     needs: [test, build]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-22.04
@@ -86,51 +89,40 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-      - uses: dtolnay/rust-toolchain@stable
       - uses: actions/download-artifact@v4
         with:
           pattern: native-*
           path: artifacts
           merge-multiple: true
-
-      - name: Check the tag matches the versions
-        run: |
-          tag="${GITHUB_REF_NAME#v}"
-          cargo_version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
-          npm_version=$(jq -r .version bindings/bun/package.json)
-          echo "tag=$tag cargo=$cargo_version npm=$npm_version"
-          test "$tag" = "$cargo_version" && test "$tag" = "$npm_version"
-
+      - name: Check the tag matches the version
+        run: test "${GITHUB_REF_NAME#v}" = "$(jq -r .version bindings/bun/package.json)"
       - name: Assemble npm packages
         run: bun bindings/bun/scripts/pack-npm.ts --artifacts artifacts --out dist/npm
 
-      # Errors are also emitted as ::error annotations: those are readable on the
-      # run page and through the public API, unlike raw logs.
-      - name: Check registry credentials
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          ok=1
-          if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "::error title=NPM_TOKEN is not set::Add it under Settings > Secrets and variables > Actions > Repository secrets (exact name NPM_TOKEN)."
-            ok=0
-          elif ! who=$(npm whoami 2>&1); then
-            echo "::error title=npm rejected NPM_TOKEN::$(echo "$who" | grep -E 'npm (error|ERR)' | head -4 | tr '\n' ' ')"
-            ok=0
-          else
-            echo "npm: authenticated as $who"
-          fi
-          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
-            echo "::error title=CARGO_REGISTRY_TOKEN is not set::Add it under Settings > Secrets and variables > Actions > Repository secrets (exact name CARGO_REGISTRY_TOKEN)."
-            ok=0
-          fi
-          [ "$ok" = 1 ]
-
+      # Errors are emitted as ::error/::warning annotations: those are readable on
+      # the run page and through the public API, unlike raw logs.
       - name: Publish to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error title=NPM_TOKEN is not set::Add it under Settings > Secrets and variables > Actions > Repository secrets."
+            exit 1
+          fi
+          if ! who=$(npm whoami 2>&1); then
+            echo "::error title=npm rejected NPM_TOKEN::$(echo "$who" | grep -E 'npm (error|ERR)' | head -4 | tr '\n' ' ')"
+            exit 1
+          fi
+          echo "npm: authenticated as $who"
+
+          live() {  # is name@version publicly installable? (retries for registry propagation)
+            for _ in 1 2 3 4; do
+              npm view "$1@$2" version >/dev/null 2>&1 && return 0
+              sleep 5
+            done
+            return 1
+          }
+          failed=0; staged=""
           # Platform packages first: the main package depends on them.
           for dir in dist/npm/rotlog-* dist/npm/rotlog; do
             name=$(jq -r .name "$dir/package.json")
@@ -139,19 +131,41 @@ jobs:
               echo "$name@$version is already published"
               continue
             fi
-            if ! out=$(npm publish "$dir" --access public 2>&1); then
+            if out=$(npm publish "$dir" --access public 2>&1); then
               echo "$out"
-              echo "::error title=npm publish $name failed::$(echo "$out" | grep -E 'npm (error|ERR)' | head -6 | tr '\n' ' ')"
-              exit 1
+              # Accounts with staged publishing get a staged version, not a live one.
+              live "$name" "$version" || staged="$staged $name@$version"
+            elif echo "$out" | grep -q "previously staged"; then
+              staged="$staged $name@$version"
+            else
+              echo "$out"
+              echo "::error title=npm publish $name@$version failed::$(echo "$out" | grep -E 'npm (error|ERR)' | head -6 | tr '\n' ' ')"
+              failed=1
             fi
-            echo "$out"
           done
+          if [ -n "$staged" ]; then
+            echo "::warning title=Waiting for approval on npmjs.com::Approve these staged versions (npmjs.com > your avatar > Packages > Staged, or 'npm stage approve'), platform packages before rotlog, then re-run this job:$staged"
+            failed=1
+          fi
+          exit $failed
 
+  crates:
+    needs: [test]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - name: Publish to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          test "${GITHUB_REF_NAME#v}" = "$version"
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "::error title=CARGO_REGISTRY_TOKEN is not set::Add it under Settings > Secrets and variables > Actions > Repository secrets."
+            exit 1
+          fi
           if curl -fsS -A "rotlog-release (github actions)" "https://crates.io/api/v1/crates/rotlog/$version" >/dev/null 2>&1; then
             echo "rotlog $version is already on crates.io"
             exit 0
@@ -163,6 +177,16 @@ jobs:
           fi
           echo "$out"
 
+  github-release:
+    needs: [test, build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: artifacts
+          merge-multiple: true
       - name: Package binaries
         run: |
           mkdir -p dist/release
@@ -172,7 +196,6 @@ jobs:
             tar -czf "dist/release/rotlog-${GITHUB_REF_NAME}-${key}.tar.gz" -C "$dir" .
           done
           (cd dist/release && sha256sum *.tar.gz > SHA256SUMS)
-
       - uses: softprops/action-gh-release@v2
         with:
           files: |
