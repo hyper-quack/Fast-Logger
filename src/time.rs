@@ -22,6 +22,7 @@ pub fn now_micros() -> i64 {
 
 #[cfg(all(unix, not(target_vendor = "apple")))]
 #[inline]
+#[allow(clippy::unnecessary_cast)] // tv_sec/tv_nsec are i64 on 64-bit targets only
 pub fn now_micros() -> i64 {
     let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     // SAFETY: clock_gettime writes into the provided timespec (vDSO on Linux).
